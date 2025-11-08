@@ -1,6 +1,18 @@
 [
-	{
-		"ParameterKey": "Add you parameters here",
-		"ParameterValue": "Add you parameters here"
-	}
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "Udagram"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "t2.micro"
+  },
+  {
+    "ParameterKey": "InstanceCount",
+    "ParameterValue": "4"
+  },
+  {
+    "ParameterKey": "S3BucketName",
+    "ParameterValue": "udagram-static-content-2024-rituraj-08-11-2025"
+  }
 ]

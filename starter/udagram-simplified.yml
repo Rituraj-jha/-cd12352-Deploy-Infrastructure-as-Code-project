@@ -1,0 +1,209 @@
+Description: CD12352 - Udagram Application (Simplified - No IAM Roles)
+
+Parameters:
+  EnvironmentName:
+    Description: Environment name prefix
+    Type: String
+    Default: Udagram
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+
+  InstanceCount:
+    Description: Number of EC2 instances
+    Type: Number
+    Default: 4
+
+  S3BucketName:
+    Description: S3 bucket name for static content
+    Type: String
+    Default: udagram-static-content-2024-rituraj-08-11-2025
+
+Resources:
+  # ==================== S3 BUCKET ====================
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-S3-Bucket"
+
+  # S3 Bucket Policy for Public Read Access
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicRead
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub "${S3Bucket.Arn}/*"
+
+  # ==================== SECURITY GROUPS ====================
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${EnvironmentName}-LB-SG"
+      GroupDescription: Security group for Application Load Balancer
+      VpcId: 
+        Fn::ImportValue: !Sub "${EnvironmentName}-VPC"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Allow HTTP from anywhere
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-LB-SG"
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${EnvironmentName}-EC2-SG"
+      GroupDescription: Security group for EC2 instances
+      VpcId:
+        Fn::ImportValue: !Sub "${EnvironmentName}-VPC"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          Description: Allow HTTP from Load Balancer
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-EC2-SG"
+
+  # ==================== LAUNCH TEMPLATE ====================
+  WebAppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${EnvironmentName}-Launch-Template"
+      LaunchTemplateData:
+        ImageId: ami-0885b1f6bd170450c  # Ubuntu 22.04 LTS (us-east-1)
+        InstanceType: !Ref InstanceType
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            apt-get update -y
+            apt-get upgrade -y
+            apt-get install -y nginx
+            systemctl start nginx
+            systemctl enable nginx
+            echo "It works! Udagram, Udacity" > /var/www/html/index.html
+            systemctl restart nginx
+      
+
+  # ==================== TARGET GROUP ====================
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${EnvironmentName}-TG"
+      Port: 80
+      Protocol: HTTP
+      VpcId:
+        Fn::ImportValue: !Sub "${EnvironmentName}-VPC"
+      HealthCheckEnabled: true
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      TargetType: instance
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-TG"
+
+  # ==================== APPLICATION LOAD BALANCER ====================
+  WebAppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${EnvironmentName}-ALB"
+      Type: application
+      Scheme: internet-facing
+      IpAddressType: ipv4
+      Subnets:
+        - Fn::ImportValue: !Sub "${EnvironmentName}-Public-Subnet-1"
+        - Fn::ImportValue: !Sub "${EnvironmentName}-Public-Subnet-2"
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ALB"
+
+  # ALB Listener
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !GetAtt WebAppTargetGroup.TargetGroupArn
+      LoadBalancerArn: !GetAtt WebAppLoadBalancer.LoadBalancerArn
+      Port: 80
+      Protocol: HTTP
+
+  # ==================== AUTO SCALING GROUP ====================
+  WebAppAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: !Sub "${EnvironmentName}-ASG"
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub "${EnvironmentName}-Private-Subnet-1"
+        - Fn::ImportValue: !Sub "${EnvironmentName}-Private-Subnet-2"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebAppLaunchTemplate
+        Version: !GetAtt WebAppLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref InstanceCount
+      MaxSize: !Ref InstanceCount
+      DesiredCapacity: !Ref InstanceCount
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      TargetGroupARNs:
+        - !GetAtt WebAppTargetGroup.TargetGroupArn
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ASG-Instance"
+          PropagateAtLaunch: true
+
+Outputs:
+  LoadBalancerURL:
+    Description: URL of the Application Load Balancer
+    Value: !Sub "http://${WebAppLoadBalancer.DNSName}"
+    Export:
+      Name: !Sub "${EnvironmentName}-LoadBalancer-URL"
+
+  S3BucketName:
+    Description: S3 Bucket for static content
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub "${EnvironmentName}-S3-Bucket-Name"
+
+  LoadBalancerDNSName:
+    Description: DNS name of Load Balancer
+    Value: !GetAtt WebAppLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${EnvironmentName}-ALB-DNS"
