@@ -73,35 +73,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${EnvironmentName}-LB-SG"
-    # ==================== IAM ROLE FOR S3 ACCESS ====================
-  EC2InstanceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: S3AccessPolicy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:ListBucket
-                Resource:
-                  - !Sub 'arn:aws:s3:::${S3BucketName}'
-                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
-
-  EC2InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles:
-        - !Ref EC2InstanceRole
 
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -130,10 +101,8 @@ Resources:
     Properties:
       LaunchTemplateName: !Sub "${EnvironmentName}-Launch-Template"
       LaunchTemplateData:
-        ImageId: ami-0885b1f6bd170450c  # Ubuntu 22.04 LTS (us-east-1)
+        ImageId: ami-053b0d53c279acc90  # Updated Ubuntu 22.04 LTS (us-east-1)
         InstanceType: !Ref InstanceType
-        IamInstanceProfile:
-          Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
           - !Ref EC2SecurityGroup
         BlockDeviceMappings:
@@ -150,16 +119,31 @@ Resources:
             # Update system
             apt-get update -y
             apt-get upgrade -y
-            apt-get install -y nginx awscli
+            apt-get install -y nginx
             
-            # Download index.html from S3 bucket
-            aws s3 cp s3://${S3BucketName}/index.html /var/www/html/index.html
+            # Create index.html (this would normally be downloaded from S3)
+            cat > /var/www/html/index.html << 'EOF'
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Udagram</title>
+                <style>
+                    body { text-align: center; margin-top: 50px; font-family: Arial; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+                    h1 { color: #FF9900; }
+                </style>
+            </head>
+            <body>
+                <h1>It works! Udagram, Udacity</h1>
+                <p>Deployed by: Rituraj</p>
+                <p>Infrastructure as Code - CD12352</p>
+                <p><small>Note: In a non-restricted environment, this file would be downloaded from S3.</small></p>
+            </body>
+            </html>
+            EOF
             
             # Start NGINX
             systemctl start nginx
             systemctl enable nginx
-            systemctl restart nginx
-      
 
   # ==================== TARGET GROUP ====================
   WebAppTargetGroup:
