@@ -73,6 +73,35 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${EnvironmentName}-LB-SG"
+    # ==================== IAM ROLE FOR S3 ACCESS ====================
+  EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${S3BucketName}'
+                  - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2InstanceRole
 
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -95,7 +124,7 @@ Resources:
         - Key: Name
           Value: !Sub "${EnvironmentName}-EC2-SG"
 
-  # ==================== LAUNCH TEMPLATE ====================
+    # ==================== LAUNCH TEMPLATE ====================
   WebAppLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
@@ -103,17 +132,32 @@ Resources:
       LaunchTemplateData:
         ImageId: ami-0885b1f6bd170450c  # Ubuntu 22.04 LTS (us-east-1)
         InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
           - !Ref EC2SecurityGroup
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: 10
+              VolumeType: gp2
+              DeleteOnTermination: true
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
+            set -e
+            
+            # Update system
             apt-get update -y
             apt-get upgrade -y
-            apt-get install -y nginx
+            apt-get install -y nginx awscli
+            
+            # Download index.html from S3 bucket
+            aws s3 cp s3://${S3BucketName}/index.html /var/www/html/index.html
+            
+            # Start NGINX
             systemctl start nginx
             systemctl enable nginx
-            echo "It works! Udagram, Udacity" > /var/www/html/index.html
             systemctl restart nginx
       
 
